@@ -1,0 +1,31 @@
+# ════════════════════════════════════════════════════════════════════════
+#  CV Engine — Python Requirements (pinned versions)
+#
+#  NOTE: torch and torchvision are NOT listed here.
+#  They are installed separately in the Dockerfile with the correct
+#  index URL (CPU or CUDA) before this file is processed.
+#  Installing torch from here would pull the wrong build.
+# ════════════════════════════════════════════════════════════════════════
+
+# ── Core AI / Detection ──────────────────────────────────────────────────
+# YOLOv8 — object detection (includes ultralytics CLI)
+ultralytics==8.3.169
+
+# supervision — high-level tracking/annotation utilities (ByteTrack wrapper)
+supervision==0.25.1
+
+# ── Computer Vision ──────────────────────────────────────────────────────
+# headless build — no Qt/GUI dependencies (safe for Docker/server)
+opencv-python-headless==4.10.0.84
+
+# ── Numerical / Scientific ───────────────────────────────────────────────
+numpy==1.26.4
+scipy==1.13.1
+scikit-learn==1.5.2
+
+# ── Visualization (validation/debug scripts only) ────────────────────────
+matplotlib==3.9.2
+
+# ── Utilities ────────────────────────────────────────────────────────────
+tqdm==4.66.5
+python-decouple==3.8

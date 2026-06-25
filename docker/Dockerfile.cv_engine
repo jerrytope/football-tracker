@@ -1,0 +1,46 @@
+# ════════════════════════════════════════════════════════════════════════
+#  CV Engine — CPU-only Docker Image
+#  For GPU production: swap base image to pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime
+#  and remove the explicit CPU torch install step.
+# ════════════════════════════════════════════════════════════════════════
+
+FROM python:3.11-slim
+
+# ── System dependencies ────────────────────────────────────────────────
+# libgl1 / libglib2.0-0: required by OpenCV even in headless mode
+# ffmpeg: required by OpenCV VideoCapture for decoding MP4 files
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxrender1 \
+    libxext6 \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# ── Install CPU-only PyTorch first (must precede requirements.txt) ─────
+# This ensures pip does NOT pull the CUDA build of torch from ultralytics
+RUN pip install --no-cache-dir \
+    torch==2.3.0 \
+    torchvision==0.18.0 \
+    --index-url https://download.pytorch.org/whl/cpu
+
+# ── Install the rest of the CV engine dependencies ─────────────────────
+COPY cv_engine/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir --default-timeout=1000 -r requirements.txt
+
+# ── Copy source code ───────────────────────────────────────────────────
+COPY cv_engine/ ./cv_engine/
+
+# ── Volumes (mounted at runtime via docker-compose) ────────────────────
+# /app/cv_engine/test_data   — local video clips
+# /app/cv_engine/weights     — YOLO .pt files
+# /app/cv_engine/output      — debug/validation output PNGs
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+
+# Default: drop into a shell so we can run scripts interactively
+CMD ["/bin/bash"]

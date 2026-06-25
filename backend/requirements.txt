@@ -1,0 +1,37 @@
+# ════════════════════════════════════════════════════════════════════════
+#  Django Backend — Python Requirements (pinned versions)
+#  Install with: pip install -r requirements.txt
+# ════════════════════════════════════════════════════════════════════════
+
+# ── Django Core ──────────────────────────────────────────────────────────
+Django==5.1.4
+djangorestframework==3.15.2
+
+# ── Authentication ───────────────────────────────────────────────────────
+djangorestframework-simplejwt==5.3.1
+
+# ── Asynchronous Task Queue ───────────────────────────────────────────────
+celery==5.4.0
+redis==5.2.1                      # Python Redis client (also used as result backend)
+flower==2.0.1                     # Celery task monitoring dashboard
+
+# ── Database ─────────────────────────────────────────────────────────────
+psycopg2-binary==2.9.10           # PostgreSQL adapter
+
+# ── File / Cloud Storage ─────────────────────────────────────────────────
+django-storages==1.14.4           # S3 / GCS / Azure storage backends
+boto3==1.35.93                    # AWS SDK (required by django-storages[s3])
+
+# ── Configuration ────────────────────────────────────────────────────────
+python-decouple==3.8              # Reads .env file into settings.py
+
+# ── CORS ─────────────────────────────────────────────────────────────────
+django-cors-headers==4.6.0        # Allow React/Vue frontend to call the API
+
+# ── Error Tracking ───────────────────────────────────────────────────────
+sentry-sdk==2.19.2                # Exception tracking (disable with SENTRY_DSN="")
+
+# ── Development / Testing ────────────────────────────────────────────────
+pytest==8.3.4
+pytest-django==4.9.0
+factory-boy==3.3.1                # Model factories for tests
