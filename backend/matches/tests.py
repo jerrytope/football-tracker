@@ -4,7 +4,8 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework import status
 from rest_framework.test import APITestCase
 from unittest.mock import patch
-from .models import Match, TrackingCoordinate
+from .models import Match, TrackingCoordinate, MatchEvent
+from .utils.event_extractor import extract_match_events
 
 User = get_user_model()
 
@@ -143,3 +144,103 @@ class MatchAPITests(APITestCase):
         response = self.client.get(frames_url, {"frame_start": 0, "frame_end": 1600})
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("error", response.data)
+
+    def test_retrieve_events_endpoint_isolation(self):
+        match1 = Match.objects.create(owner=self.user1, title="My Match", video_file=self.mock_video)
+        match2 = Match.objects.create(owner=self.user2, title="Other Match", video_file=self.mock_video)
+        
+        MatchEvent.objects.create(match=match2, event_type="shot", frame_number=5, team="away")
+        
+        events_url = reverse("match_events", kwargs={"pk": match2.id})
+        response = self.client.get(events_url)
+        # Should return 404 since it's not owned by user1
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_events_endpoint_filters(self):
+        match = Match.objects.create(owner=self.user1, title="Events Filter Match", video_file=self.mock_video)
+        MatchEvent.objects.create(match=match, event_type="pass", frame_number=5, team="home")
+        MatchEvent.objects.create(match=match, event_type="shot", frame_number=10, team="home")
+        
+        events_url = reverse("match_events", kwargs={"pk": match.id})
+        
+        # Filter for pass events only
+        response = self.client.get(events_url, {"event_type": "pass"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["event_type"], "pass")
+
+    def test_event_extractor_possession_and_pass(self):
+        match = Match.objects.create(owner=self.user1, title="Extractor Test", video_file=self.mock_video)
+        
+        # Frame 0: Ball is close to Player 1 (home) -> possession established
+        TrackingCoordinate.objects.create(match=match, frame_number=0, player_id=-1, team_classification="ball", x_coord=50.0, y_coord=30.0)
+        TrackingCoordinate.objects.create(match=match, frame_number=0, player_id=1, team_classification="home", x_coord=50.5, y_coord=30.0)
+        
+        # Frame 1: Ball is free but within timeout
+        TrackingCoordinate.objects.create(match=match, frame_number=1, player_id=-1, team_classification="ball", x_coord=52.0, y_coord=32.0)
+        
+        # Frame 2: Ball is close to Player 2 (home) -> successful pass
+        TrackingCoordinate.objects.create(match=match, frame_number=2, player_id=-1, team_classification="ball", x_coord=55.0, y_coord=35.0)
+        TrackingCoordinate.objects.create(match=match, frame_number=2, player_id=2, team_classification="home", x_coord=55.5, y_coord=35.0)
+        
+        # Run extractor
+        result = extract_match_events(match.id, fps=20)
+        self.assertIn("Successfully extracted", result)
+        
+        # Check possession events
+        possession_events = MatchEvent.objects.filter(match=match, event_type="possession")
+        self.assertEqual(possession_events.count(), 1)
+        self.assertEqual(possession_events.first().player_initiator, 1)
+        
+        # Check pass events
+        pass_events = MatchEvent.objects.filter(match=match, event_type="pass")
+        self.assertEqual(pass_events.count(), 1)
+        self.assertEqual(pass_events.first().player_initiator, 1)
+        self.assertEqual(pass_events.first().player_receiver, 2)
+        self.assertEqual(pass_events.first().details["success"], True)
+
+    def test_event_extractor_interception(self):
+        match = Match.objects.create(owner=self.user1, title="Interception Extractor Test", video_file=self.mock_video)
+        
+        # Frame 0: Ball close to Player 1 (home)
+        TrackingCoordinate.objects.create(match=match, frame_number=0, player_id=-1, team_classification="ball", x_coord=50.0, y_coord=30.0)
+        TrackingCoordinate.objects.create(match=match, frame_number=0, player_id=1, team_classification="home", x_coord=50.5, y_coord=30.0)
+        
+        # Frame 1: Ball close to Player 3 (away) -> intercepted
+        TrackingCoordinate.objects.create(match=match, frame_number=1, player_id=-1, team_classification="ball", x_coord=55.0, y_coord=35.0)
+        TrackingCoordinate.objects.create(match=match, frame_number=1, player_id=3, team_classification="away", x_coord=55.5, y_coord=35.0)
+        
+        extract_match_events(match.id, fps=20)
+        
+        # Verify interception event
+        interceptions = MatchEvent.objects.filter(match=match, event_type="interception")
+        self.assertEqual(interceptions.count(), 1)
+        self.assertEqual(interceptions.first().player_initiator, 1)
+        self.assertEqual(interceptions.first().player_receiver, 3)
+        self.assertEqual(interceptions.first().team, "away")
+        
+        # Verify failed pass event
+        failed_passes = MatchEvent.objects.filter(match=match, event_type="pass", details={"success": False})
+        self.assertEqual(failed_passes.count(), 1)
+        self.assertEqual(failed_passes.first().player_initiator, 1)
+
+    def test_event_extractor_shot(self):
+        match = Match.objects.create(owner=self.user1, title="Shot Extractor Test", video_file=self.mock_video)
+        
+        # Frame 0: Ball close to Player 1 (home) at (10, 34)
+        TrackingCoordinate.objects.create(match=match, frame_number=0, player_id=-1, team_classification="ball", x_coord=10.0, y_coord=34.0)
+        TrackingCoordinate.objects.create(match=match, frame_number=0, player_id=1, team_classification="home", x_coord=10.2, y_coord=34.0)
+        
+        # Frame 1: Ball shot leftwards with high speed towards target X=0, Y=34 (goal mouth)
+        # Distance = 2.0 meters. Speed = 2.0 * 20 = 40.0 m/s.
+        TrackingCoordinate.objects.create(match=match, frame_number=1, player_id=-1, team_classification="ball", x_coord=8.0, y_coord=34.0)
+        
+        extract_match_events(match.id, fps=20)
+        
+        # Verify shot event
+        shots = MatchEvent.objects.filter(match=match, event_type="shot")
+        self.assertEqual(shots.count(), 1)
+        self.assertEqual(shots.first().player_initiator, 1)
+        self.assertEqual(shots.first().team, "home")
+        self.assertEqual(shots.first().details["target_goal"], "left")
+        self.assertGreater(shots.first().details["speed_ms"], 18.0)

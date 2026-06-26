@@ -71,10 +71,17 @@ def run_test():
         frames = TrackingCoordinate.objects.filter(match=match).values_list("frame_number", flat=True).distinct()
         print(f"Unique frames with tracking data: {len(frames)}")
         
-        if coord_count > 0:
+        # Verify and print extracted events
+        from matches.models import MatchEvent
+        events = MatchEvent.objects.filter(match=match).order_by("frame_number")
+        print(f"Total MatchEvents saved: {events.count()}")
+        for event in events:
+            print(f"  Frame {event.frame_number}: {event.event_type} | Team: {event.team} | Init: {event.player_initiator} | Recv: {event.player_receiver} | Details: {event.details}")
+            
+        if coord_count > 0 and events.count() > 0:
             print("E2E Test PASSED!")
         else:
-            print("E2E Test FAILED: Coordinate count is 0.")
+            print(f"E2E Test FAILED: Coordinates = {coord_count}, Events = {events.count()}")
     else:
         print(f"E2E Test FAILED. Match status: {match.status}")
         if match.error_log:

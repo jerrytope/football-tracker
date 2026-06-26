@@ -81,6 +81,10 @@ def process_match_video(self, match_id):
                 "homography_matrix": extractor.default_H.tolist()
             }
 
+        # 5b. Extract tactical events from raw coordinates
+        from .utils.event_extractor import extract_match_events
+        extract_match_events(match.id)
+
         # 6. Mark match as completed
         match.status = "completed"
         match.processing_completed_at = timezone.now()

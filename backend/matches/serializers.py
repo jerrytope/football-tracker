@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Match, TrackingCoordinate
+from .models import Match, TrackingCoordinate, MatchEvent
 
 class TrackingCoordinateSerializer(serializers.ModelSerializer):
     class Meta:
@@ -54,3 +54,18 @@ class MatchStatusSerializer(serializers.ModelSerializer):
     class Meta:
         model = Match
         fields = ("status", "processing_started_at", "processing_completed_at", "error_log")
+
+class MatchEventSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MatchEvent
+        fields = (
+            "id",
+            "event_type",
+            "frame_number",
+            "player_initiator",
+            "player_receiver",
+            "team",
+            "x_coord",
+            "y_coord",
+            "details",
+        )

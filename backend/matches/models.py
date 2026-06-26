@@ -46,3 +46,32 @@ class TrackingCoordinate(models.Model):
 
     def __str__(self):
         return f"Match {self.match_id} | Frame {self.frame_number} | Player {self.player_id} ({self.team_classification})"
+
+class MatchEvent(models.Model):
+    EVENT_TYPE_CHOICES = [
+        ("possession", "Possession Change"),
+        ("pass", "Pass"),
+        ("interception", "Interception"),
+        ("shot", "Shot"),
+        ("sprint", "Sprint"),
+    ]
+
+    match = models.ForeignKey(Match, on_delete=models.CASCADE, related_name="events")
+    event_type = models.CharField(max_length=20, choices=EVENT_TYPE_CHOICES)
+    frame_number = models.IntegerField()
+    player_initiator = models.IntegerField(null=True, blank=True)
+    player_receiver = models.IntegerField(null=True, blank=True)
+    team = models.CharField(max_length=20, null=True, blank=True)
+    x_coord = models.FloatField(null=True, blank=True)
+    y_coord = models.FloatField(null=True, blank=True)
+    details = models.JSONField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["match", "event_type"]),
+            models.Index(fields=["match", "frame_number"]),
+        ]
+
+    def __str__(self):
+        return f"Match {self.match_id} | Frame {self.frame_number} | {self.event_type} ({self.team})"

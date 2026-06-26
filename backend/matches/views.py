@@ -2,8 +2,8 @@ from rest_framework import generics, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
-from .models import Match, TrackingCoordinate
-from .serializers import MatchSerializer, MatchCreateSerializer, MatchStatusSerializer
+from .models import Match, TrackingCoordinate, MatchEvent
+from .serializers import MatchSerializer, MatchCreateSerializer, MatchStatusSerializer, MatchEventSerializer
 
 class MatchListCreateView(generics.ListCreateAPIView):
     def get_queryset(self):
@@ -78,3 +78,20 @@ class MatchFramesView(APIView):
             })
             
         return Response(data)
+
+
+class MatchEventsView(generics.ListAPIView):
+    serializer_class = MatchEventSerializer
+
+    def get_queryset(self):
+        match_id = self.kwargs.get("pk")
+        # Enforce owner boundaries
+        match = get_object_or_404(Match, pk=match_id, owner=self.request.user)
+        
+        queryset = MatchEvent.objects.filter(match=match).order_by("frame_number")
+        
+        event_types = self.request.query_params.get("event_type")
+        if event_types:
+            queryset = queryset.filter(event_type__in=event_types.split(","))
+            
+        return queryset
