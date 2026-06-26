@@ -1,0 +1,23 @@
+yolov8x.pt
+# Ignore all .pt files
+*.pt
+
+# Ignore all files in the models directory
+models/*
+
+# Ignore all .h5 files (common for model files)
+*.h5
+
+# Ignore all .zip, .tar, .tar.gz files (common for compressed files)
+*.zip
+*.tar
+*.tar.gz
+
+# Ignore all directories named data
+data/
+
+runs/predict
+runs/predict2runs/detect/predict/08fd33_4.avi
+runs/detect/predict2/08fd33_4.avi
+
+training/football-players-detection-1/football-players-detection-1/
