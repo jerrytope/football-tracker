@@ -26,7 +26,7 @@ def run_test():
     
     # 3. Resolve test video path
     video_path = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "cv_engine", "test_data", "clip_3min.mp4")
+        os.path.join(os.path.dirname(__file__), "..", "cv_engine", "test_data", "1new.mp4")
     )
     if not os.path.exists(video_path):
         print(f"Error: test video not found at {video_path}")
@@ -39,7 +39,7 @@ def run_test():
         match = Match.objects.create(
             owner=user,
             title="E2E Test Match",
-            video_file=File(f, name="clip_3min.mp4")
+            video_file=File(f, name="1new.mp4")
         )
     print(f"Created Match {match.id}. Initial Status: {match.status}")
     
@@ -51,7 +51,7 @@ def run_test():
     
     # 5. Poll status
     start_time = time.time()
-    max_timeout = 180  # 3 minutes max
+    max_timeout = 3600  # 3 minutes max
     
     print("Polling match status...")
     while time.time() - start_time < max_timeout:

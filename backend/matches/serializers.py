@@ -8,6 +8,7 @@ class TrackingCoordinateSerializer(serializers.ModelSerializer):
 
 class MatchSerializer(serializers.ModelSerializer):
     owner = serializers.PrimaryKeyRelatedField(read_only=True)
+    total_frames = serializers.SerializerMethodField()
 
     class Meta:
         model = Match
@@ -23,6 +24,7 @@ class MatchSerializer(serializers.ModelSerializer):
             "updated_at",
             "processing_started_at",
             "processing_completed_at",
+            "total_frames",
         )
         read_only_fields = (
             "owner",
@@ -31,7 +33,13 @@ class MatchSerializer(serializers.ModelSerializer):
             "error_log",
             "processing_started_at",
             "processing_completed_at",
+            "total_frames",
         )
+
+    def get_total_frames(self, obj):
+        from django.db.models import Max
+        max_frame = obj.coordinates.aggregate(Max('frame_number'))['frame_number__max']
+        return max_frame if max_frame is not None else 0
 
 class MatchCreateSerializer(serializers.ModelSerializer):
     class Meta:
