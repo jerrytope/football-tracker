@@ -58,3 +58,7 @@ docker/secrets/
 htmlcov/
 plans/
 runpod-setup.md
+media/
+uploads/matches/
+backend/uploads/
+backend/media/
