@@ -56,3 +56,5 @@ docker/secrets/
 .pytest_cache/
 .coverage
 htmlcov/
+plans/
+runpod-setup.md
