@@ -23,7 +23,7 @@ django-storages==1.14.4           # S3 / GCS / Azure storage backends
 boto3==1.35.93                    # AWS SDK (required by django-storages[s3])
 
 # ── Configuration ────────────────────────────────────────────────────────
-python-decouple==3.8              # Reads .env file into settings.py
+python-dotenv==1.0.1             # Loads .env values into os.environ for local development
 
 # ── CORS ─────────────────────────────────────────────────────────────────
 django-cors-headers==4.6.0        # Allow React/Vue frontend to call the API

@@ -10,13 +10,37 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
+import os
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
-from decouple import config
+
+from dotenv import load_dotenv
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = BASE_DIR.parent
+
+for env_path in (PROJECT_ROOT / ".env", BASE_DIR / ".env"):
+    if env_path.exists():
+        load_dotenv(env_path)
+        break
+
+
+def get_env(name, default=None, cast=None):
+    value = os.getenv(name, default)
+    if cast is None:
+        return value
+    if cast is bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+    if cast is int:
+        return int(value)
+    return cast(value)
 
 sys.path.append(str(BASE_DIR.parent))
 
@@ -24,12 +48,12 @@ sys.path.append(str(BASE_DIR.parent))
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = config("DJANGO_SECRET_KEY", default="django-insecure-k*__b%_*oz@sqealxah2tau1pxe02^&goxw4v@3hns3%cmio1r")
+SECRET_KEY = get_env("DJANGO_SECRET_KEY", "django-insecure-k*__b%_*oz@sqealxah2tau1pxe02^&goxw4v@3hns3%cmio1r")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = config("DEBUG", default=True, cast=bool)
+DEBUG = get_env("DEBUG", True, bool)
 
-ALLOWED_HOSTS = config("DJANGO_ALLOWED_HOSTS", default="localhost,127.0.0.1").split(",")
+ALLOWED_HOSTS = get_env("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 
 # Application definition
 
@@ -84,7 +108,9 @@ WSGI_APPLICATION = "config.wsgi.application"
 
 # Database
 # Parse DATABASE_URL natively to avoid third party dependencies
-database_url = config("DATABASE_URL")
+database_url = get_env("DATABASE_URL")
+if not database_url:
+    raise RuntimeError("DATABASE_URL is not set")
 url = urlparse(database_url)
 
 DATABASES = {
@@ -140,13 +166,13 @@ USE_TZ = True
 STATIC_URL = "static/"
 
 # File Storage Configuration
-USE_S3 = config("USE_S3", default=False, cast=bool)
+USE_S3 = get_env("USE_S3", False, bool)
 
 if USE_S3:
-    AWS_ACCESS_KEY_ID = config("AWS_ACCESS_KEY_ID")
-    AWS_SECRET_ACCESS_KEY = config("AWS_SECRET_ACCESS_KEY")
-    AWS_STORAGE_BUCKET_NAME = config("AWS_S3_BUCKET_NAME")
-    AWS_S3_ENDPOINT_URL = config("AWS_S3_ENDPOINT_URL")
+    AWS_ACCESS_KEY_ID = get_env("AWS_ACCESS_KEY_ID")
+    AWS_SECRET_ACCESS_KEY = get_env("AWS_SECRET_ACCESS_KEY")
+    AWS_STORAGE_BUCKET_NAME = get_env("AWS_S3_BUCKET_NAME")
+    AWS_S3_ENDPOINT_URL = get_env("AWS_S3_ENDPOINT_URL")
     AWS_S3_CUSTOM_DOMAIN = None
     AWS_DEFAULT_ACL = None
     AWS_QUERYSTRING_AUTH = True
@@ -167,17 +193,12 @@ else:
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # ── Celery Configuration ─────────────────────────────────────────────────────
-CELERY_BROKER_URL = config("CELERY_BROKER_URL", default="redis://localhost:6379/0")
-CELERY_RESULT_BACKEND = config("CELERY_RESULT_BACKEND", default="redis://localhost:6379/1")
+CELERY_BROKER_URL = get_env("CELERY_BROKER_URL", "redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = get_env("CELERY_RESULT_BACKEND", "redis://localhost:6379/1")
 CELERY_TASK_ACKS_LATE = True
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 
-
-import os
 import ssl
-
-# CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL")
-# CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND")
 
 CELERY_BROKER_USE_SSL = {
     "ssl_cert_reqs": ssl.CERT_NONE,
@@ -193,7 +214,7 @@ CELERY_TASK_ROUTES = {
 }
 
 # YOLO Weights Configuration
-YOLO_WEIGHTS_LOCAL_PATH = config("YOLO_WEIGHTS_LOCAL_PATH", default="./cv_engine/weights/yolov8x.pt")
-YOLO_WEIGHTS_S3_PATH = config("YOLO_WEIGHTS_S3_PATH", default="s3://your-s3-bucket-name/weights/yolov8x.pt")
+YOLO_WEIGHTS_LOCAL_PATH = get_env("YOLO_WEIGHTS_LOCAL_PATH", "./cv_engine/weights/yolov8x.pt")
+YOLO_WEIGHTS_S3_PATH = get_env("YOLO_WEIGHTS_S3_PATH", "s3://your-s3-bucket-name/weights/yolov8x.pt")
 
 
