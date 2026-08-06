@@ -31,6 +31,20 @@ django-cors-headers==4.6.0        # Allow React/Vue frontend to call the API
 # ── Error Tracking ───────────────────────────────────────────────────────
 sentry-sdk==2.19.2                # Exception tracking (disable with SENTRY_DSN="")
 
+# ── Computer Vision / CV Engine ────────────────────────────────────────
+# These are required by the Celery worker when it imports cv_engine
+opencv-python-headless==4.10.0.84
+ultralytics==8.3.169
+supervision==0.25.1
+numpy==1.26.4
+scipy==1.13.1
+scikit-learn==1.5.2
+matplotlib==3.9.2
+tqdm==4.66.5
+
+# Note: install a GPU-compatible torch/torchvision build separately on RunPod
+# for your CUDA version, since the exact wheel depends on the pod GPU runtime.
+
 # ── Development / Testing ────────────────────────────────────────────────
 pytest==8.3.4
 pytest-django==4.9.0
