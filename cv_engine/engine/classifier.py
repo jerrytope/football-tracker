@@ -16,24 +16,24 @@ class TeamClassifier:
         Extract the top-60% of the bounding box (jersey region) and calculate the mean color.
         """
         x1, y1, x2, y2 = map(int, bbox)
-        
+
         # Ensure coordinates are within frame boundaries
         h, w, _ = frame.shape
         x1, y1 = max(0, x1), max(0, y1)
         x2, y2 = min(w, x2), min(h, y2)
-        
+
         if (x2 - x1) <= 0 or (y2 - y1) <= 0:
             return np.array([0.0, 0.0, 0.0])
 
         crop = frame[y1:y2, x1:x2]
-        
+
         # Extract jersey region (top 60% of the box height)
         jersey_height = int((y2 - y1) * 0.6)
         if jersey_height <= 0:
             return np.array([0.0, 0.0, 0.0])
-            
+
         jersey_crop = crop[0:jersey_height, :]
-        
+
         # Calculate mean color (OpenCV loads as BGR, we'll keep BGR)
         mean_color = cv2.mean(jersey_crop)[:3]
         return np.array(mean_color)
@@ -61,11 +61,11 @@ class TeamClassifier:
         """
         if len(self.player_colors) < 2:
             return
-            
+
         # Run KMeans with 2 clusters (for the two teams)
         self.kmeans = KMeans(n_clusters=2, init="k-means++", n_init=10, random_state=42)
         self.kmeans.fit(self.player_colors)
-        
+
         # Store team dominant colors
         self.team_colors[0] = self.kmeans.cluster_centers_[0]
         self.team_colors[1] = self.kmeans.cluster_centers_[1]
@@ -81,8 +81,11 @@ class TeamClassifier:
 
         # If KMeans is not fitted yet, default to 'team_a' temporarily
         if self.kmeans is None:
-            # Check if we have enough samples to fit right away if warmup is done
-            if len(self.player_colors) >= 2:
+            # Only force a fit once the warmup window has actually elapsed. Without the
+            # frame_count guard this fires on the very first frame - two jersey colours from
+            # a single frame are enough to satisfy the sample check - and the clusters end up
+            # fitted to one arbitrary moment instead of the whole warmup sample.
+            if self.frame_count >= self.warmup_frames and len(self.player_colors) >= 2:
                 self.fit()
             if self.kmeans is None:
                 return "team_a"
@@ -94,7 +97,7 @@ class TeamClassifier:
         # Predict cluster label (0 or 1)
         cluster_id = self.kmeans.predict(color.reshape(1, -1))[0]
         team = "team_a" if cluster_id == 0 else "team_b"
-        
+
         # Cache the team for this player_id to maintain consistency
         self.player_team_cache[player_id] = team
         return team

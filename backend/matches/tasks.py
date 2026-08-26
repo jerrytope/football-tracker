@@ -1,6 +1,7 @@
 import os
 import traceback
 import tempfile
+import json
 from celery import shared_task
 from django.utils import timezone
 from django.conf import settings
@@ -52,11 +53,29 @@ def process_match_video(self, match_id):
 
         # 3. Instantiate Coordinates Extractor and run pipeline
         extractor = CoordinatesExtractor(model_path=weights_path)
-        
+
+        # 3b. Resolve the calibration. Uploads through the UI carry none, and the extractor's
+        #     fallback is a generic trapezoid that does not match most camera angles - it lands
+        #     the centre circle around y=50 instead of y=34. A configured default is far better
+        #     than that guess for footage from a known camera position.
+        calibration_config = match.calibration_matrix
+        if not calibration_config and settings.DEFAULT_CALIBRATION_PATH:
+            default_path = settings.DEFAULT_CALIBRATION_PATH
+            if not os.path.isabs(default_path):
+                default_path = os.path.abspath(
+                    os.path.join(settings.BASE_DIR.parent, default_path)
+                )
+            if os.path.exists(default_path):
+                with open(default_path) as calib_file:
+                    calibration_config = json.load(calib_file)
+                print(f"[Task] Using default calibration from {default_path}")
+            else:
+                print(f"[Task] DEFAULT_CALIBRATION_PATH set but not found: {default_path}")
+
         # 4. Extract coordinates in batches of 500 frames
         coordinate_generator = extractor.extract_coordinates(
             video_path=video_path,
-            calibration_config=match.calibration_matrix
+            calibration_config=calibration_config
         )
 
         for batch in coordinate_generator:
@@ -75,20 +94,25 @@ def process_match_video(self, match_id):
             # Perform bulk insert
             TrackingCoordinate.objects.bulk_create(coords_to_create, batch_size=10000)
 
-        # 5. Store final calibration matrix if not already stored
+        # 5. Record the frame rate read off the video, and store the homography that was
+        #    actually used for this clip (which may have been rescaled to its resolution).
+        match.video_fps = extractor.video_fps
+
         if not match.calibration_matrix:
             match.calibration_matrix = {
-                "homography_matrix": extractor.default_H.tolist()
+                "homography_matrix": extractor.active_H.tolist()
             }
 
         # 5b. Extract tactical events from raw coordinates
         from .utils.event_extractor import extract_match_events
-        extract_match_events(match.id)
+        extract_match_events(match.id, fps=match.video_fps)
 
         # 6. Mark match as completed
         match.status = "completed"
         match.processing_completed_at = timezone.now()
-        match.save(update_fields=["status", "processing_completed_at", "calibration_matrix"])
+        match.save(update_fields=[
+            "status", "processing_completed_at", "calibration_matrix", "video_fps"
+        ])
 
         return f"Match {match_id} processed successfully."
 

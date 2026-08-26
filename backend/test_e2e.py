@@ -1,4 +1,5 @@
 import os
+import json
 import sys
 import time
 import django
@@ -24,22 +25,44 @@ def run_test():
     user = User.objects.create_user(username="e2e_test_user", password="e2epassword123")
     print(f"Created e2e test user: {user.username}")
     
-    # 3. Resolve test video path
-    video_path = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "cv_engine", "test_data", "1new.mp4")
-    )
+    # 3. Resolve test video path.
+    #    Defaults to the short smoke-test clip; pass a filename (or a full path) as argv[1]
+    #    to run against something else, e.g. `python test_e2e.py test_5s.mp4`.
+    clip = sys.argv[1] if len(sys.argv) > 1 else "clip_3min.mp4"
+    if os.path.isabs(clip):
+        video_path = clip
+    else:
+        video_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "cv_engine", "test_data", clip)
+        )
     if not os.path.exists(video_path):
         print(f"Error: test video not found at {video_path}")
         return
         
     print(f"Found test video at {video_path} ({os.path.getsize(video_path)} bytes)")
     
+    # 3b. Optional calibration config (argv[2]), produced by cv_engine/engine/calibrate.py.
+    #     Without one the extractor falls back to a generic trapezoid rescaled to the clip's
+    #     resolution, which is a guess at the camera angle rather than a measurement of it.
+    calibration = None
+    if len(sys.argv) > 2:
+        calib_path = sys.argv[2]
+        if not os.path.isabs(calib_path):
+            calib_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", calib_path))
+        if not os.path.exists(calib_path):
+            print(f"Error: calibration config not found at {calib_path}")
+            return
+        with open(calib_path) as cf:
+            calibration = json.load(cf)
+        print(f"Using calibration from {calib_path}")
+
     # 4. Create Match (this will upload/copy the file to media/)
     with open(video_path, "rb") as f:
         match = Match.objects.create(
             owner=user,
             title="E2E Test Match",
-            video_file=File(f, name="1new.mp4")
+            video_file=File(f, name=os.path.basename(video_path)),
+            calibration_matrix=calibration
         )
     print(f"Created Match {match.id}. Initial Status: {match.status}")
     
@@ -70,6 +93,31 @@ def run_test():
         # Verify coordinates exist per frame
         frames = TrackingCoordinate.objects.filter(match=match).values_list("frame_number", flat=True).distinct()
         print(f"Unique frames with tracking data: {len(frames)}")
+
+        # Sanity-check the projection: a green run proves the pipeline ran, not that the
+        # homography suited this footage. If the spread pins to the pitch boundaries, the
+        # clipping in project_point() is saturating and the matrix is wrong for this clip.
+        from django.db.models import Min, Max
+        spread = TrackingCoordinate.objects.filter(match=match).aggregate(
+            Min("x_coord"), Max("x_coord"), Min("y_coord"), Max("y_coord")
+        )
+        print(f"Detected fps: {match.video_fps}")
+        print(
+            "Pitch coordinate spread: "
+            f"x {spread['x_coord__min']:.1f}-{spread['x_coord__max']:.1f} (of 0-105), "
+            f"y {spread['y_coord__min']:.1f}-{spread['y_coord__max']:.1f} (of 0-68)"
+        )
+
+        teams = sorted(
+            TrackingCoordinate.objects.filter(match=match)
+            .values_list("team_classification", flat=True)
+            .distinct()
+        )
+        ball_rows = TrackingCoordinate.objects.filter(match=match, player_id=-1).count()
+        print(f"Team classifications present: {teams}")
+        print(f"Ball rows (player_id=-1): {ball_rows}")
+        if ball_rows == 0:
+            print("WARNING: no ball detected - possession, pass and shot events cannot fire.")
         
         # Verify and print extracted events
         from matches.models import MatchEvent

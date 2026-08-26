@@ -20,6 +20,9 @@ class Match(models.Model):
     video_file = models.FileField(upload_to=match_video_upload_path)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
     calibration_matrix = models.JSONField(null=True, blank=True)
+    # Read from the uploaded video during processing. Drives every speed threshold in
+    # event extraction and the playback rate in the frontend viewer.
+    video_fps = models.FloatField(default=25.0)
     error_log = models.TextField(null=True, blank=True)
     
     created_at = models.DateTimeField(auto_now_add=True)

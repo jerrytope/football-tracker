@@ -200,18 +200,30 @@ CELERY_TASK_REJECT_ON_WORKER_LOST = True
 
 import ssl
 
-CELERY_BROKER_USE_SSL = {
-    "ssl_cert_reqs": ssl.CERT_NONE,
-}
+# Only attach SSL parameters when the URL actually asks for TLS. Celery raises
+# E_REDIS_SSL_PARAMS_AND_SCHEME_MISMATCH if these are set against a plain redis:// URL,
+# which is what a local Redis uses.
+if CELERY_BROKER_URL.startswith("rediss://"):
+    CELERY_BROKER_USE_SSL = {
+        "ssl_cert_reqs": ssl.CERT_NONE,
+    }
 
-CELERY_REDIS_BACKEND_USE_SSL = {
-    "ssl_cert_reqs": ssl.CERT_NONE,
-}
+if CELERY_RESULT_BACKEND.startswith("rediss://"):
+    CELERY_REDIS_BACKEND_USE_SSL = {
+        "ssl_cert_reqs": ssl.CERT_NONE,
+    }
 # Routing queue configuration
 CELERY_TASK_DEFAULT_QUEUE = "default"
 CELERY_TASK_ROUTES = {
     "matches.tasks.*": {"queue": "gpu"},
 }
+
+# Calibration fallback.
+# A match with no calibration_matrix of its own falls back to a generic trapezoid rescaled to the
+# clip's resolution - a guess at the camera angle, and wrong for most footage. Point this at a
+# config produced by cv_engine/engine/calibrate.py to give uploads a sensible default.
+# It only suits footage from the camera position it was measured against.
+DEFAULT_CALIBRATION_PATH = get_env("DEFAULT_CALIBRATION_PATH", "")
 
 # YOLO Weights Configuration
 YOLO_WEIGHTS_LOCAL_PATH = get_env("YOLO_WEIGHTS_LOCAL_PATH", "./cv_engine/weights/yolov8x.pt")

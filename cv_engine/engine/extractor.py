@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import math
 import cv2
 import numpy as np
 import supervision as sv
@@ -38,7 +39,7 @@ class CameraTracker:
         """
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         h, w = gray.shape
-        
+
         # Track features outside the pitch (left/right margins) to avoid moving player noise
         mask = np.zeros_like(gray)
         mask[:, 0:int(w * 0.1)] = 1
@@ -50,7 +51,7 @@ class CameraTracker:
             next_pts, status, _ = cv2.calcOpticalFlowPyrLK(
                 self.prev_gray, gray, self.prev_pts, None, **self.lk_params
             )
-            
+
             # Select successfully tracked points
             valid_prev = self.prev_pts[status == 1]
             valid_next = next_pts[status == 1]
@@ -59,7 +60,7 @@ class CameraTracker:
                 translations = valid_next - valid_prev
                 dx = float(np.median(translations[:, 0]))
                 dy = float(np.median(translations[:, 1]))
-                
+
                 # Check for camera cuts or abrupt changes
                 if abs(dx) > 100 or abs(dy) > 100:
                     dx, dy = 0.0, 0.0
@@ -70,7 +71,7 @@ class CameraTracker:
         # Re-detect features for the next frame
         self.prev_pts = cv2.goodFeaturesToTrack(gray, mask=mask, **self.feature_params)
         self.prev_gray = gray.copy()
-        
+
         return self.cumulative_dx, self.cumulative_dy
 
 class CoordinatesExtractor:
@@ -81,20 +82,44 @@ class CoordinatesExtractor:
             alternative_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "football_analysis_base", "models", "best.pt")
             if os.path.exists(alternative_path):
                 model_path = alternative_path
-                
+
         self.model = YOLO(model_path)
         self.tracker = sv.ByteTrack()
         self.classifier = TeamClassifier(warmup_frames=warmup_frames)
         self.camera_tracker = CameraTracker()
-        
-        # Setup Default Homography
-        pixel_vertices = np.array(
+
+        # Setup Default Homography.
+        # These pixel vertices were digitised on ~1920x1080 broadcast footage. Any clip at a
+        # different resolution must have them rescaled first, otherwise every projected point
+        # collapses into a small sub-region of the pitch. See extract_coordinates().
+        self.reference_size = (1920.0, 1080.0)
+        self.pixel_vertices = np.array(
             [[110, 1035], [265, 275], [910, 260], [1614, 950]], dtype=np.float32
         )
-        target_vertices = np.array(
+        self.target_vertices = np.array(
             [[0, 68], [0, 0], [105, 0], [105, 68]], dtype=np.float32
         )
-        self.default_H = cv2.getPerspectiveTransform(pixel_vertices, target_vertices)
+        self.default_H = cv2.getPerspectiveTransform(self.pixel_vertices, self.target_vertices)
+
+        # Populated per-video by extract_coordinates()
+        self.active_H = self.default_H
+        self.video_fps = 25.0
+
+    def homography_for_size(self, frame_w, frame_h):
+        """
+        Rescale the default pixel vertices from the reference resolution to the video's actual
+        resolution and rebuild the homography. Returns default_H unchanged when the size matches
+        or cannot be determined.
+        """
+        ref_w, ref_h = self.reference_size
+        if not frame_w or not frame_h:
+            return self.default_H
+        if (float(frame_w), float(frame_h)) == (ref_w, ref_h):
+            return self.default_H
+
+        scale = np.array([frame_w / ref_w, frame_h / ref_h], dtype=np.float32)
+        scaled_vertices = (self.pixel_vertices * scale).astype(np.float32)
+        return cv2.getPerspectiveTransform(scaled_vertices, self.target_vertices)
 
     def project_point(self, H, x, y):
         """
@@ -105,7 +130,7 @@ class CoordinatesExtractor:
         projected = H @ pt
         if projected[2] != 0:
             projected /= projected[2]
-            
+
         x_pitch = max(0.0, min(105.0, float(projected[0])))
         y_pitch = max(0.0, min(68.0, float(projected[1])))
         return x_pitch, y_pitch
@@ -118,10 +143,12 @@ class CoordinatesExtractor:
             raise FileNotFoundError(f"Video file not found at: {video_path}")
 
         # Load configuration
-        H = self.default_H
+        H = None
         gk_overrides = {}
         if calibration_config:
             if "homography_matrix" in calibration_config:
+                # An explicitly calibrated matrix always wins - it was measured against this
+                # footage, so rescaling it would corrupt it.
                 H = np.array(calibration_config["homography_matrix"], dtype=np.float32)
             if "gk_overrides" in calibration_config:
                 # Convert string keys to int player IDs
@@ -131,17 +158,39 @@ class CoordinatesExtractor:
         if not cap.isOpened():
             raise IOError(f"Failed to open video file: {video_path}")
 
+        frame_w = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+        frame_h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+
+        if H is None:
+            H = self.homography_for_size(frame_w, frame_h)
+        self.active_H = H
+
+        # Frame rate drives every speed threshold downstream (sprint, shot, possession timeout).
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        if fps and fps > 0 and not math.isnan(fps):
+            self.video_fps = float(fps)
+        else:
+            self.video_fps = 25.0
+
+        # A short clip cannot afford a 50-frame classifier warmup - every player would fall back
+        # to "team_a" for a large slice of the video. Scale it to the clip length. A tenth is
+        # ample: each frame contributes one colour sample per player, so even 5 frames clears
+        # the 10-sample minimum that fit() needs.
+        total_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        if total_frames and total_frames > 0:
+            self.classifier.warmup_frames = max(5, min(50, int(total_frames // 10)))
+
         batch = []
         frame_num = 0
 
         # Class IDs mapping from our YOLO model
         # 0: ball, 1: goalkeeper, 2: player, 3: referee
-        
+
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 break
-                
+
             # Track camera shift
             dx, dy = self.camera_tracker.update(frame)
 
@@ -179,7 +228,7 @@ class CoordinatesExtractor:
 
                 # Foot position is the center bottom of bounding box
                 foot_x, foot_y = get_foot_position(bbox)
-                
+
                 # Apply camera offset
                 foot_x_adj = foot_x - dx
                 foot_y_adj = foot_y - dy
@@ -221,11 +270,11 @@ class CoordinatesExtractor:
 
                 if class_id == cls_names_inv["ball"]:
                     ball_x, ball_y = get_center_of_bbox(bbox)
-                    
+
                     # Apply camera offset
                     ball_x_adj = ball_x - dx
                     ball_y_adj = ball_y - dy
-                    
+
                     pitch_x, pitch_y = self.project_point(H, ball_x_adj, ball_y_adj)
 
                     record = {
@@ -246,7 +295,7 @@ class CoordinatesExtractor:
             frame_num += 1
 
         cap.release()
-        
+
         # Yield any remaining coordinates
         if batch:
             yield batch

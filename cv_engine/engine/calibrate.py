@@ -9,7 +9,27 @@ def main():
     parser.add_argument("--video", type=str, default="cv_engine/test_data/clip_3min.mp4", help="Path to video file")
     parser.add_argument("--output", type=str, default="cv_engine/engine/calibration_config.json", help="Path to save configuration")
     parser.add_argument("--default", action="store_true", help="Generate default calibration without GUI prompt")
+    parser.add_argument(
+        "--points",
+        type=str,
+        default=None,
+        help=(
+            "Non-interactive calibration. Semicolon-separated correspondences of the form "
+            "'px,py:pitch_x,pitch_y', at least 4. Example: "
+            "'323,177:52.5,0; 323,290:52.5,68; 248,230:43.35,34; 398,230:61.65,34'. "
+            "Use this when no GUI is available, or to script a calibration you have already measured."
+        ),
+    )
     args = parser.parse_args()
+
+    # Non-interactive path takes precedence over both the GUI and --default.
+    if args.points:
+        pixel_points, pitch_points = parse_points(args.points)
+        if len(pixel_points) < 4:
+            print(f"[Calibrate] --points supplied only {len(pixel_points)} correspondences; 4 are required.")
+            return
+        write_config(pixel_points, pitch_points, args.output)
+        return
 
     # Default mapping based on the original trapezoid to standard 105x68 pitch
     default_pixels = [
@@ -101,6 +121,30 @@ def main():
     else:
         write_config(pixel_points, pitch_points, args.output)
 
+def parse_points(spec):
+    """
+    Parse a --points specification into (pixel_points, pitch_points).
+    Format: 'px,py:pitch_x,pitch_y' entries separated by ';'.
+    """
+    pixel_points, pitch_points = [], []
+    for entry in spec.split(";"):
+        entry = entry.strip()
+        if not entry:
+            continue
+        try:
+            pixel_part, pitch_part = entry.split(":")
+            px, py = (float(v) for v in pixel_part.split(","))
+            gx, gy = (float(v) for v in pitch_part.split(","))
+        except ValueError:
+            raise SystemExit(
+                f"[Calibrate] Could not parse correspondence '{entry}'. "
+                "Expected 'px,py:pitch_x,pitch_y'."
+            )
+        pixel_points.append([px, py])
+        pitch_points.append([gx, gy])
+    return pixel_points, pitch_points
+
+
 def write_config(pixel_pts, pitch_pts, output_path):
     pixel_arr = np.array(pixel_pts, dtype=np.float32)
     pitch_arr = np.array(pitch_pts, dtype=np.float32)
@@ -112,9 +156,10 @@ def write_config(pixel_pts, pitch_pts, output_path):
         "pixel_vertices": pixel_pts,
         "pitch_vertices": pitch_pts,
         "homography_matrix": H.tolist(),
-        "gk_overrides": {
-            "91": "team_a" # Default example goalkeeper override
-        }
+        # Map a specific track ID to a team, for cases the jersey-colour classifier gets wrong
+        # (goalkeepers especially, since their kit matches neither outfield team). Left empty by
+        # default: a placeholder ID here would silently mislabel whichever player it lands on.
+        "gk_overrides": {}
     }
     
     # Ensure directory exists

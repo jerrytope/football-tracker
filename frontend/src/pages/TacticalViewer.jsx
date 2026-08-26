@@ -49,8 +49,17 @@ export default function TacticalViewer() {
   const lastTimeRef = useRef(null);
   const currentFrameRef = useRef(0);
 
-  const FPS = 20; // Broadcast frames per second
   const CHUNK_SIZE = 750;
+
+  // Frame rate is measured off the uploaded video during processing rather than assumed.
+  // The animation loop reads it through a ref because the rAF callback captures its closure
+  // when playback starts and would otherwise keep using the pre-load fallback.
+  const fps = match?.video_fps || 20;
+  const fpsRef = useRef(20);
+
+  useEffect(() => {
+    fpsRef.current = fps;
+  }, [fps]);
 
   // Sync ref with state so requestAnimationFrame loop has current frame index
   useEffect(() => {
@@ -132,7 +141,7 @@ export default function TacticalViewer() {
   const playLoop = (time) => {
     if (lastTimeRef.current !== null) {
       const delta = (time - lastTimeRef.current) / 1000; // seconds elapsed
-      const framesToAdvance = delta * FPS * speed;
+      const framesToAdvance = delta * fpsRef.current * speed;
       const nextFrame = Math.min(
         currentFrameRef.current + framesToAdvance, 
         match?.total_frames || 0
@@ -189,7 +198,7 @@ export default function TacticalViewer() {
 
   // Convert frame number to match clock MM:SS
   const formatTime = (frameIndex) => {
-    const seconds = Math.floor(frameIndex / FPS);
+    const seconds = Math.floor(frameIndex / fps);
     const m = Math.floor(seconds / 60).toString().padStart(2, '0');
     const s = (seconds % 60).toString().padStart(2, '0');
     return `${m}:${s}`;
@@ -393,7 +402,7 @@ export default function TacticalViewer() {
             <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.15rem' }}>
               <span>Frames: {match.total_frames}</span>
               <span>•</span>
-              <span>Estimated: {(match.total_frames / FPS).toFixed(0)} seconds</span>
+              <span>Estimated: {(match.total_frames / fps).toFixed(0)} seconds</span>
             </div>
           </div>
         </div>

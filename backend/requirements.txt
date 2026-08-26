@@ -1,51 +1,68 @@
-# ════════════════════════════════════════════════════════════════════════
-#  Django Backend — Python Requirements (pinned versions)
-#  Install with: pip install -r requirements.txt
-# ════════════════════════════════════════════════════════════════════════
+# =======================================================================
+#  Django Backend - Python Requirements
+#
+#  Install with:  .venv\Scripts\pip.exe install -r requirements.txt
+#
+#  Versions here match the working environment in backend/.venv. For an exact
+#  rebuild including transitive dependencies, use the lockfile instead:
+#      .venv\Scripts\pip.exe install -r requirements.lock.txt
+#
+#  ASCII only, deliberately. pip on Windows decodes this file as cp1252, so a
+#  non-ASCII character anywhere (even in a comment) makes the whole file
+#  unreadable with a UnicodeDecodeError.
+# =======================================================================
 
-# ── Django Core ──────────────────────────────────────────────────────────
+# --- Django Core -------------------------------------------------------
 Django==5.1.4
 djangorestframework==3.15.2
 
-# ── Authentication ───────────────────────────────────────────────────────
+# --- Authentication ----------------------------------------------------
 djangorestframework-simplejwt==5.3.1
 
-# ── Asynchronous Task Queue ───────────────────────────────────────────────
+# --- Asynchronous Task Queue -------------------------------------------
 celery==5.4.0
-redis==5.2.1                      # Python Redis client (also used as result backend)
-flower==2.0.1                     # Celery task monitoring dashboard
+redis==5.2.1                      # Python Redis client (also the result backend)
+flower==2.0.1                     # Celery monitoring; runs as `celery -A config flower`
 
-# ── Database ─────────────────────────────────────────────────────────────
+# --- Database ----------------------------------------------------------
 psycopg2-binary==2.9.10           # PostgreSQL adapter
 
-# ── File / Cloud Storage ─────────────────────────────────────────────────
+# --- File / Cloud Storage ----------------------------------------------
+# Only exercised when USE_S3=True. The local setup uses FileSystemStorage.
 django-storages==1.14.4           # S3 / GCS / Azure storage backends
 boto3==1.35.93                    # AWS SDK (required by django-storages[s3])
 
-# ── Configuration ────────────────────────────────────────────────────────
-python-dotenv==1.0.1             # Loads .env values into os.environ for local development
+# --- Configuration -----------------------------------------------------
+python-dotenv==1.2.2              # Loads .env values into os.environ
 
-# ── CORS ─────────────────────────────────────────────────────────────────
-django-cors-headers==4.6.0        # Allow React/Vue frontend to call the API
+# --- CORS --------------------------------------------------------------
+django-cors-headers==4.6.0        # Allow the Vite frontend to call the API
 
-# ── Error Tracking ───────────────────────────────────────────────────────
+# --- Error Tracking ----------------------------------------------------
 sentry-sdk==2.19.2                # Exception tracking (disable with SENTRY_DSN="")
 
-# ── Computer Vision / CV Engine ────────────────────────────────────────
-# These are required by the Celery worker when it imports cv_engine
-opencv-python-headless==4.10.0.84
-ultralytics==8.3.169
-supervision==0.25.1
-numpy==1.26.4
-scipy==1.13.1
-scikit-learn==1.5.2
-matplotlib==3.9.2
-tqdm==4.66.5
+# --- Deep Learning Runtime ---------------------------------------------
+# On Windows, PyPI ships CPU-only torch wheels, which is what this machine
+# needs (Intel UHD 620, no CUDA). On an NVIDIA machine install the CUDA build:
+#   pip install torch==2.12.1 torchvision==0.27.1 --index-url https://download.pytorch.org/whl/cu124
+torch==2.12.1
+torchvision==0.27.1
 
-# Note: install a GPU-compatible torch/torchvision build separately on RunPod
-# for your CUDA version, since the exact wheel depends on the pod GPU runtime.
+# --- Computer Vision / CV Engine ---------------------------------------
+# Required by the Celery worker, which imports cv_engine.engine.extractor.
+# numpy MUST stay on 2.x: ultralytics 8.4 and torch 2.12 are built against it,
+# and pinning back to 1.26 breaks both.
+ultralytics==8.4.78
+supervision==0.29.1               # ByteTrack wrapper
+opencv-python==4.13.0.92          # GUI build, needed by calibrate.py's click mode
+opencv-python-headless==4.13.0.92
+numpy==2.5.0
+scipy==1.18.0
+scikit-learn==1.9.0               # KMeans jersey-colour team classifier
+matplotlib==3.11.0                # validation/debug scripts only
+tqdm==4.68.3
 
-# ── Development / Testing ────────────────────────────────────────────────
+# --- Development / Testing ---------------------------------------------
 pytest==8.3.4
 pytest-django==4.9.0
 factory-boy==3.3.1                # Model factories for tests

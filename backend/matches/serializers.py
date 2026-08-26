@@ -19,6 +19,7 @@ class MatchSerializer(serializers.ModelSerializer):
             "video_file",
             "status",
             "calibration_matrix",
+            "video_fps",
             "error_log",
             "created_at",
             "updated_at",
@@ -30,6 +31,7 @@ class MatchSerializer(serializers.ModelSerializer):
             "owner",
             "status",
             "calibration_matrix",
+            "video_fps",
             "error_log",
             "processing_started_at",
             "processing_completed_at",
@@ -42,9 +44,14 @@ class MatchSerializer(serializers.ModelSerializer):
         return max_frame if max_frame is not None else 0
 
 class MatchCreateSerializer(serializers.ModelSerializer):
+    # Optional at upload time. Supply a config produced by cv_engine/engine/calibrate.py to
+    # pin the pitch homography for this clip's camera position. Omitted, the task falls back
+    # to settings.DEFAULT_CALIBRATION_PATH, then to a generic rescaled trapezoid.
+    calibration_matrix = serializers.JSONField(required=False, allow_null=True)
+
     class Meta:
         model = Match
-        fields = ("id", "title", "video_file")
+        fields = ("id", "title", "video_file", "calibration_matrix")
 
     def create(self, validated_data):
         request = self.context.get("request")
