@@ -2,6 +2,9 @@
 .env
 *.env
 
+# ── start-local.ps1 background logs (macOS/Linux) ──────────────
+/logs/
+
 # ── Python ───────────────────────────────────────────────────
 __pycache__/
 *.py[cod]

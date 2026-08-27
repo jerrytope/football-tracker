@@ -42,9 +42,13 @@ django-cors-headers==4.6.0        # Allow the Vite frontend to call the API
 sentry-sdk==2.19.2                # Exception tracking (disable with SENTRY_DSN="")
 
 # --- Deep Learning Runtime ---------------------------------------------
-# On Windows, PyPI ships CPU-only torch wheels, which is what this machine
-# needs (Intel UHD 620, no CUDA). On an NVIDIA machine install the CUDA build:
+# A plain pip install of these pins works on Windows, Mac, and Linux alike. PyPI's default
+# wheel on Windows and Mac is CPU-only (Mac has no CUDA at all), which is what a machine with
+# no NVIDIA GPU needs - this machine (Intel UHD 620) included. On an NVIDIA machine you can
+# install the CUDA build instead for faster inference:
 #   pip install torch==2.12.1 torchvision==0.27.1 --index-url https://download.pytorch.org/whl/cu124
+# cv_engine/engine/device.py picks CUDA vs CPU automatically at runtime either way, and
+# deliberately never requests "mps" on Apple Silicon - see the Hardware note in README.md.
 torch==2.12.1
 torchvision==0.27.1
 

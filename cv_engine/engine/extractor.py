@@ -12,6 +12,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "football_analysis_base"))
 
 from cv_engine.engine.classifier import TeamClassifier
+from cv_engine.engine.device import resolve_device
 from cv_engine.football_analysis_base.utils.bbox_utils import get_center_of_bbox, get_foot_position
 
 class CameraTracker:
@@ -83,7 +84,9 @@ class CoordinatesExtractor:
             if os.path.exists(alternative_path):
                 model_path = alternative_path
 
+        self.device = resolve_device()
         self.model = YOLO(model_path)
+        self.model.to(self.device)
         self.tracker = sv.ByteTrack()
         self.classifier = TeamClassifier(warmup_frames=warmup_frames)
         self.camera_tracker = CameraTracker()
@@ -195,7 +198,7 @@ class CoordinatesExtractor:
             dx, dy = self.camera_tracker.update(frame)
 
             # YOLOv8 Predict
-            results = self.model.predict(frame, conf=0.1, verbose=False)[0]
+            results = self.model.predict(frame, conf=0.1, verbose=False, device=self.device)[0]
             cls_names = results.names
             cls_names_inv = {v: k for k, v in cls_names.items()}
 

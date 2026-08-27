@@ -20,9 +20,14 @@ frontend replays it on a canvas.
 
 ## Hardware note
 
-**This machine has no NVIDIA GPU** — only Intel UHD Graphics 620, and the installed torch is the
-`2.12.1+cpu` build. YOLO inference runs on the i7-8665U CPU at roughly **4–6 seconds per frame**.
-That is expected, not a hang. The Celery queue is still named `gpu`; it is only a label.
+`cv_engine/engine/device.py` picks the inference device automatically: **CUDA if
+`torch.cuda.is_available()`, otherwise CPU.** This is deliberate on Apple Silicon too — it never
+requests `"mps"`, because several ops this pipeline depends on (torchvision's NMS among them)
+are not implemented for the MPS backend, and requesting it outright breaks inference instead of
+just running slower. So on a Mac (or any machine with no NVIDIA GPU) inference runs on CPU, same
+as this Windows machine's Intel UHD Graphics 620 (torch `2.12.1+cpu`), at roughly **4–6 seconds
+per frame**. That is expected, not a hang. The Celery queue is still named `gpu`; it is only a
+label — it does not mean the code requires one.
 
 Measured runtimes for the bundled test clips are in [Testing the pipeline](#testing-the-pipeline).
 
@@ -30,20 +35,44 @@ Measured runtimes for the bundled test clips are in [Testing the pipeline](#test
 
 ## Prerequisites
 
-- **Docker Desktop** — provides PostgreSQL and Redis
-- Python and Node dependencies are **already installed**: `backend/.venv` and
-  `frontend/node_modules`. You do not need to create a venv or run `pip install`.
-- `ffmpeg` / `ffprobe` at `C:\ffmpeg\bin` — used to cut and inspect test clips
+- **Docker Desktop** — provides PostgreSQL and Redis. [Windows](https://www.docker.com/products/docker-desktop/) /
+  [Mac](https://www.docker.com/products/docker-desktop/) (Apple Silicon or Intel build, matching your Mac).
+- **Python 3** and **Node** — `python3 --version` / `node --version`. On Mac, install both with
+  Homebrew if missing: `brew install python node`.
+- `start-local.ps1` is a PowerShell script and runs on both platforms:
+  - Windows: the built-in `powershell.exe` (5.1) is enough.
+  - Mac: install PowerShell 7 first — `brew install --cask powershell` — then run scripts with
+    `pwsh`, not `powershell`.
+- `ffmpeg` / `ffprobe` — used only to cut and inspect test clips, not by the app itself.
+  Windows: expected at `C:\ffmpeg\bin`. Mac: `brew install ffmpeg`.
+
+`frontend/node_modules` and `backend/.venv` are **not** committed to git (they're gitignored), so
+a fresh clone — including on a teammate's Mac — starts without them. `npm install` sets up the
+former; `start-local.ps1` now creates and populates `backend/.venv` for you automatically on
+first run if it doesn't already exist, using whichever `python3`/`python` it finds on `PATH`, so
+there's no manual venv/pip step on either platform.
 
 ## Quick start
 
 ```powershell
+# Windows
 .\start-local.ps1
+
+# Mac
+pwsh ./start-local.ps1
 ```
 
-That starts Docker if needed, brings up Postgres and Redis, waits for Postgres to pass its
-healthcheck, applies migrations, and launches the Django server and Celery worker in their own
-windows. Add `-Adminer` to also start the database inspector.
+That creates `backend/.venv` if it's missing, starts Docker if needed, brings up Postgres and
+Redis, waits for Postgres to pass its healthcheck, applies migrations, and launches the Django
+server and Celery worker. Add `-Adminer` to also start the database inspector, `-Restart` to
+restart just the Celery worker after a code change, or `-Stop` to stop Django and Celery.
+
+On Windows, Django and Celery each launch in their own console window (and the worker needs
+`--pool=solo`, since the default prefork pool relies on `fork()`, which Windows doesn't have). On
+Mac, both run in the background instead — there's no cross-platform way to pop open a new
+terminal window from a script — with output going to `logs/django.log` and `logs/celery.log`
+(`tail -f` them to watch progress), and the worker runs with Celery's normal prefork pool since
+`fork()` works fine there.
 
 Then, for the UI:
 
@@ -78,6 +107,10 @@ npm run dev
 
 `--pool=solo` is **mandatory on Windows** — the default prefork pool relies on `fork()` and will
 hang. `-Q default,gpu` is required because match processing is dispatched to the `gpu` queue.
+
+On Mac, swap `.venv\Scripts\python.exe` → `.venv/bin/python` and `.venv\Scripts\celery.exe` →
+`.venv/bin/celery`, and drop `--pool=solo --concurrency=1` from the worker command — `fork()`
+works fine there, so the default prefork pool is what you want.
 </details>
 
 ## Development services
@@ -107,16 +140,23 @@ cd backend
 ## Python environment
 
 **You do not need to activate the virtual environment.** Every command in this README and in
-`start-local.ps1` calls the interpreter by full path (`.venv\Scripts\python.exe`,
-`.venv\Scripts\celery.exe`), which uses that venv directly. Activation only puts `.venv\Scripts` on
-your `PATH`.
+`start-local.ps1` calls the interpreter by full path (`.venv\Scripts\python.exe` on Windows,
+`.venv/bin/python` on Mac; `.venv\Scripts\celery.exe` / `.venv/bin/celery`), which uses that venv
+directly. Activation only puts the venv's binary directory on your `PATH`.
 
 Activate it only if you want to type bare `python` / `celery`:
 
 ```powershell
+# Windows
 cd backend
 .venv\Scripts\Activate.ps1
 python manage.py runserver      # now resolves to the venv interpreter
+deactivate
+
+# Mac
+cd backend
+source .venv/bin/activate
+python manage.py runserver
 deactivate
 ```
 
@@ -125,23 +165,37 @@ deactivate
 | File | Purpose |
 |------|---------|
 | `backend/requirements.txt` | Curated list of direct dependencies, versions matching the working venv |
-| `backend/requirements.lock.txt` | `pip freeze` of the whole venv — exact rebuild, transitive deps included |
+| `backend/requirements.lock.txt` | `pip freeze` of the whole venv — exact rebuild, transitive deps included. It's a freeze of a Windows venv, so use `requirements.txt` on Mac instead and let pip resolve each package's own Mac wheel. |
 | `cv_engine/requirements.txt` | Used only by `docker/Dockerfile.cv_engine`; not used by the local flow |
 
-Rebuilding the environment from scratch:
+Rebuilding the environment from scratch (this is exactly what `start-local.ps1` does automatically
+the first time it doesn't find `backend/.venv`):
 
 ```powershell
+# Windows
 cd backend
 python -m venv .venv
-.venv\Scripts\pip.exe install -r requirements.lock.txt
+.venv\Scripts\pip.exe install -r requirements.txt
+
+# Mac
+cd backend
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 ```
+
+Use `requirements.lock.txt` instead only when you want an exact, reproducible rebuild **on
+Windows** — see the note in the table above for why it's not portable to Mac.
 
 Two things to know about these files:
 
 - **`torch` and `torchvision` are listed in `backend/requirements.txt`.** They previously were not,
   with a comment saying to install them separately for RunPod's CUDA version. That made the file
-  unable to produce a working environment on its own. On Windows, PyPI serves CPU-only torch wheels,
-  which is what this machine needs.
+  unable to produce a working environment on its own. A plain `pip install` of the pinned versions
+  gets you a working build on any platform: PyPI's default wheel on Windows and Mac only supports
+  CPU (Mac has no CUDA at all), which is exactly what those machines need; on Linux the default
+  wheel bundles CUDA support and transparently falls back to CPU when no GPU is present.
+  `cv_engine/engine/device.py` picks CPU vs. CUDA at runtime either way — see
+  [Hardware note](#hardware-note).
 - **Keep these files ASCII-only.** pip on Windows decodes requirements files as cp1252, so a single
   non-ASCII character *anywhere* — including inside a comment — fails the whole file with a
   `UnicodeDecodeError`. Box-drawing characters in the header comments used to do exactly this, which

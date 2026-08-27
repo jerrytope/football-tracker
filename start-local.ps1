@@ -1,19 +1,29 @@
 <#
 .SYNOPSIS
-    Bring the football-tracker stack up locally on Windows.
+    Bring the football-tracker stack up locally on Windows or macOS.
 
 .DESCRIPTION
     Starts Docker (if needed), the Postgres and Redis containers, applies migrations, and
-    launches the Django dev server and the Celery worker in their own windows.
+    launches the Django dev server and the Celery worker. Creates backend/.venv automatically
+    on first run if it doesn't exist yet.
 
-    The Celery worker MUST use --pool=solo on Windows: the default prefork pool relies on
-    fork() and will hang. Getting that flag right automatically is the main reason this
-    script exists.
+    On Windows, Django and Celery each launch in their own console window, and the Celery
+    worker MUST use --pool=solo: the default prefork pool relies on fork() and will hang.
+    On macOS/Linux, prefork works fine, so the worker runs with Celery's normal defaults;
+    both processes run in the background with output redirected to logs/*.log, since there
+    is no cross-platform way to pop open a new terminal window from a script.
+
+    Run this with Windows PowerShell (powershell.exe) on Windows, or with PowerShell 7+
+    (pwsh) on macOS - install it with `brew install --cask powershell` if you don't have it.
 
 .PARAMETER Restart
     Kill the running Celery worker and start a fresh one, then exit. Use this after editing
     anything under cv_engine/ or backend/matches/ - Celery does not reload changed code, and
     a stale worker will keep producing pre-edit behaviour.
+
+.PARAMETER Stop
+    Stop the Django dev server and the Celery worker, then exit. Mainly useful on
+    macOS/Linux, where both run in the background with no window to just close.
 
 .PARAMETER Adminer
     Also start the Adminer database inspector on http://localhost:8080.
@@ -21,51 +31,128 @@
 .EXAMPLE
     .\start-local.ps1
     .\start-local.ps1 -Restart
+    .\start-local.ps1 -Stop
     .\start-local.ps1 -Adminer
 #>
 [CmdletBinding()]
 param(
     [switch]$Restart,
+    [switch]$Stop,
     [switch]$Adminer
 )
 
 $ErrorActionPreference = 'Stop'
+
+# $IsWindows / $IsMacOS only exist in PowerShell Core (pwsh, 6+). Windows PowerShell 5.1 has
+# neither, so their absence itself means Windows.
+$IsWin = if (Test-Path Variable:IsWindows) { $IsWindows } else { $true }
+$IsMac = if (Test-Path Variable:IsMacOS) { $IsMacOS } else { $false }
+
 $root = $PSScriptRoot
 $backend = Join-Path $root 'backend'
-$python = Join-Path $backend '.venv\Scripts\python.exe'
-$celery = Join-Path $backend '.venv\Scripts\celery.exe'
+$logDir = Join-Path $root 'logs'
+
+if ($IsWin) {
+    $python = Join-Path $backend '.venv\Scripts\python.exe'
+    $pip = Join-Path $backend '.venv\Scripts\pip.exe'
+    $celery = Join-Path $backend '.venv\Scripts\celery.exe'
+    $systemPython = 'python'
+} else {
+    $python = Join-Path $backend '.venv/bin/python'
+    $pip = Join-Path $backend '.venv/bin/pip'
+    $celery = Join-Path $backend '.venv/bin/celery'
+    $systemPython = 'python3'
+}
 
 function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 function Write-Ok($msg)   { Write-Host "    $msg" -ForegroundColor Green }
 function Write-Warn($msg) { Write-Host "    $msg" -ForegroundColor Yellow }
 
-function Stop-CeleryWorker {
-    # The worker runs as python.exe, so Get-Process celery never finds it - match on the
-    # command line instead.
-    $procs = Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
-             Where-Object { $_.CommandLine -like '*celery*' -and $_.CommandLine -like '*worker*' }
-    if (-not $procs) {
-        Write-Warn 'No running Celery worker found.'
+function Get-MatchingProcessIds($commandLineFragments) {
+    # Returns PIDs of processes whose command line contains every fragment given.
+    if ($IsWin) {
+        $procs = Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+                 Where-Object {
+                     $cmd = $_.CommandLine
+                     if (-not $cmd) { return $false }
+                     foreach ($f in $commandLineFragments) { if ($cmd -notlike "*$f*") { return $false } }
+                     return $true
+                 }
+        return $procs | ForEach-Object { $_.ProcessId }
+    } else {
+        $pattern = $commandLineFragments -join '.*'
+        $found = & pgrep -f $pattern 2>$null
+        if (-not $found) { return @() }
+        return $found
+    }
+}
+
+function Stop-ProcessesByPattern($commandLineFragments, $label) {
+    $ids = Get-MatchingProcessIds $commandLineFragments
+    if (-not $ids) {
+        Write-Warn "No running $label found."
         return
     }
-    foreach ($p in $procs) {
-        Write-Ok "Stopping worker (pid $($p.ProcessId))"
-        Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+    foreach ($procId in $ids) {
+        Write-Ok "Stopping $label (pid $procId)"
+        if ($IsWin) {
+            Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+        } else {
+            & kill -TERM $procId 2>$null
+        }
     }
 }
 
+function Stop-CeleryWorker { Stop-ProcessesByPattern @('celery', 'worker') 'Celery worker' }
+function Stop-DjangoServer { Stop-ProcessesByPattern @('manage.py', 'runserver') 'Django dev server' }
+
 function Start-CeleryWorker {
-    Start-Process -FilePath $celery `
-        -ArgumentList '-A','config','worker','--loglevel=info','--pool=solo','--concurrency=1','-Q','default,gpu' `
-        -WorkingDirectory $backend
-    Write-Ok 'Celery worker starting in a new window (--pool=solo, queues: default,gpu)'
+    if ($IsWin) {
+        # --pool=solo is mandatory on Windows: the default prefork pool relies on fork(),
+        # which Windows doesn't have, and the worker just hangs.
+        Start-Process -FilePath $celery `
+            -ArgumentList '-A','config','worker','--loglevel=info','--pool=solo','--concurrency=1','-Q','default,gpu' `
+            -WorkingDirectory $backend
+        Write-Ok 'Celery worker starting in a new window (--pool=solo, queues: default,gpu)'
+    } else {
+        New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+        Start-Process -FilePath $celery `
+            -ArgumentList '-A','config','worker','--loglevel=info','-Q','default,gpu' `
+            -WorkingDirectory $backend -NoNewWindow `
+            -RedirectStandardOutput (Join-Path $logDir 'celery.log') `
+            -RedirectStandardError (Join-Path $logDir 'celery.err.log')
+        Write-Ok 'Celery worker starting in background (prefork, queues: default,gpu; logs: logs/celery.log)'
+    }
 }
 
-if (-not (Test-Path $python)) {
-    throw "Python venv not found at $python. Expected backend\.venv to already exist."
+function Test-Or-CreateVenv {
+    if (Test-Path $python) { return }
+    Write-Step 'No virtual environment found at backend/.venv - creating one'
+
+    $sysPythonCmd = Get-Command $systemPython -ErrorAction SilentlyContinue
+    if (-not $sysPythonCmd) {
+        throw "'$systemPython' was not found on PATH. Install Python 3 first" + $(if ($IsMac) { " (e.g. 'brew install python')." } else { '.' })
+    }
+
+    & $systemPython -m venv (Join-Path $backend '.venv')
+    if ($LASTEXITCODE -ne 0) { throw "'$systemPython -m venv' failed." }
+
+    Write-Step 'Installing backend dependencies (first run only, this can take a few minutes)'
+    & $pip install --upgrade pip | Out-Null
+    & $pip install -r (Join-Path $backend 'requirements.txt')
+    if ($LASTEXITCODE -ne 0) { throw 'pip install -r requirements.txt failed.' }
+    Write-Ok 'Virtual environment ready'
 }
 
-# ── -Restart: swap the worker and stop ───────────────────────────────────────
+# ── -Stop: stop both long-running processes and exit ─────────────────────────
+if ($Stop) {
+    Write-Step 'Stopping Django and Celery'
+    Stop-DjangoServer
+    Stop-CeleryWorker
+    return
+}
+
+# ── -Restart: swap the worker and exit ────────────────────────────────────────
 if ($Restart) {
     Write-Step 'Restarting the Celery worker'
     Stop-CeleryWorker
@@ -76,14 +163,25 @@ if ($Restart) {
     return
 }
 
+# ── 0. Virtual environment ────────────────────────────────────────────────────
+Test-Or-CreateVenv
+
 # ── 1. Docker engine ─────────────────────────────────────────────────────────
 Write-Step 'Checking Docker engine'
 docker info --format '{{.ServerVersion}}' 2>$null | Out-Null
 if (-not $?) {
     Write-Warn 'Engine not reachable - launching Docker Desktop (this takes 1-2 minutes from cold)'
-    $dd = 'C:\Program Files\Docker\Docker\Docker Desktop.exe'
-    if (-not (Test-Path $dd)) { throw "Docker Desktop not found at $dd" }
-    Start-Process $dd
+    if ($IsWin) {
+        $dd = 'C:\Program Files\Docker\Docker\Docker Desktop.exe'
+        if (-not (Test-Path $dd)) { throw "Docker Desktop not found at $dd" }
+        Start-Process $dd
+    } else {
+        $dockerApp = '/Applications/Docker.app'
+        if (-not (Test-Path $dockerApp)) {
+            throw "Docker Desktop not found at $dockerApp. Install it from https://www.docker.com/products/docker-desktop"
+        }
+        & open -a Docker
+    }
 
     $deadline = (Get-Date).AddMinutes(5)
     $ready = $false
@@ -132,12 +230,18 @@ try {
     Pop-Location
 }
 
-# ── 5. Long-running processes, each in its own window ────────────────────────
-# Separate windows on purpose: both are long-lived, and their logs are what you read when
-# something breaks.
+# ── 5. Long-running processes ─────────────────────────────────────────────────
 Write-Step 'Launching Django and Celery'
-Start-Process -FilePath $python -ArgumentList 'manage.py','runserver' -WorkingDirectory $backend
-Write-Ok 'Django dev server starting in a new window'
+if ($IsWin) {
+    Start-Process -FilePath $python -ArgumentList 'manage.py','runserver' -WorkingDirectory $backend
+    Write-Ok 'Django dev server starting in a new window'
+} else {
+    New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+    Start-Process -FilePath $python -ArgumentList 'manage.py','runserver' -WorkingDirectory $backend -NoNewWindow `
+        -RedirectStandardOutput (Join-Path $logDir 'django.log') `
+        -RedirectStandardError (Join-Path $logDir 'django.err.log')
+    Write-Ok 'Django dev server starting in background (logs: logs/django.log)'
+}
 Start-CeleryWorker
 
 # ── 6. Where things live ─────────────────────────────────────────────────────
@@ -151,6 +255,11 @@ if ($Adminer) { Write-Host '  Adminer       http://localhost:8080  (Server: db)'
 Write-Host ''
 Write-Host '  Frontend:     cd frontend; npm run dev   ->  http://localhost:5173'
 Write-Host ''
+if (-not $IsWin) {
+    Write-Host '  Logs:         tail -f logs/django.log logs/celery.log' -ForegroundColor Cyan
+    Write-Host '  Stop:         .\start-local.ps1 -Stop' -ForegroundColor Cyan
+    Write-Host ''
+}
 Write-Host 'Reminder: after editing cv_engine/ or backend/matches/, run' -ForegroundColor Yellow
 Write-Host '  .\start-local.ps1 -Restart' -ForegroundColor Yellow
 Write-Host 'Celery does not reload changed code.' -ForegroundColor Yellow
